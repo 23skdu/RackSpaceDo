@@ -1,0 +1,322 @@
+#!/usr/bin/perl -w
+use strict;
+use LWP::UserAgent;
+use JSON;
+use Getopt::Std;
+use Data::Dumper;
+my $version='1.00';
+my %opt=();
+getopts("a:l:e:s:h:n:u:i:f:t:hv",\%opt);
+if ( exists $opt{'v'}) { version_info() };
+my %apikeys=(   'cust1' => 'blahblah1',
+                'cust2' => 'blahblah2'
+                'cust2' => 'blahblah3' );
+my %acct_numbers=( 'cust1' => '0000001',
+                   'cust2' => '0000002',
+                   'cust3' => '0000003' );
+my @locations=qw/iad dfw/;
+my @actions=qw/AcceptImage ShowShare ShowBackup CancelBackup AddPublicIP BuildHost CheckImageTasks CreateGoldenImage
+               DeleteImage DestroyHost DownloadFile ExportImage GetToken ImportImage
+               SetBackup ListFlavors ListImages ShareImage ListPublicIP ListServers RemovePublicIP UploadFile/;
+our $swiftly='/usr/bin/swiftly';
+my $url; my $rc_net; my $public_ip;
+#Sanity Checking Options: must specify at least the account and action to execute
+my @accounts= keys %apikeys;
+if ((! defined $opt{'a'})|(! defined $opt{'e'})){ usage (); };
+our $account=$opt{'a'};
+our $location=$opt{'l'};
+our $flavor=$opt{'f'};
+our $hostname=$opt{'h'};
+our $host_id=$opt{'i'};
+our $action=$opt{'e'};
+our $filename=$opt{'n'};
+our $task_id=$opt{'t'};
+our $file_uuid=$opt{'u'};
+our $share_account=$opt{'s'};
+our $apikey=$apikeys{$account};
+our $acct_number=$acct_numbers{$account};
+if (! grep(/^$account$/, @accounts)) { usage() };
+if ( defined $location ) { if (! grep(/^$location$/, @locations)) { usage() }; };
+if (! grep(/^$action$/, @actions)) { usage() };
+
+#Now execute the action
+eval { &{ \&$action }();};
+
+#Subroutines
+sub version_info { print "Version: $version\n"; exit 0; };
+sub usage { print "You must specify a valid account (-a), a valid operation (-e), and for most operations, a valid location (-l):\n";
+print "Accounts: ";foreach my $acct_name(@accounts) {print $acct_name." "};print "\n";
+print "Locations: ";foreach my $rack_locations(@locations) { print $rack_locations." "};print "\n";
+print "Execute Actions: ";foreach my $executions(@actions) { print $executions." "};print "\n";exit 1; }
+
+sub SetBackup { if ( ! defined $host_id ) { print "Must specify a host id. ListServers first.\n";usage() };
+                 my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( POST => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers/$host_id/rax-si-image-schedule");
+                 $req->header('X-Auth-Token' => "$ticket");
+                 $req->header('content-type' => 'application/json');
+                 my $data="{ \"image_schedule\" : { \"retention\": 1 } }";
+                 $req->content($data);
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $decoded_response=$answer->decoded_content;
+                                            print Dumper($decoded_response);
+                                          } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub ShowBackup  { if ( ! defined $host_id ) { print "Must specify a host id. ListServers first.\n";usage() };
+                 my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( GET => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers/$host_id/rax-si-image-schedule");
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $decoded_response=$answer->decoded_content;
+                                            print Dumper($decoded_response);
+                                          } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub CancelBackup {if ( ! defined $host_id ) { print "Must specify a host id. ListServers first.\n";usage() };
+                 my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( DELETE => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers/$host_id/rax-si-image-schedule");
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $decoded_response=$answer->decoded_content;
+                                            print Dumper($decoded_response);
+                                          } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub ShareImage { if ( ! defined $file_uuid ) { print "Must specify a file uuid. ListImages first.\n";usage() };
+                 if ( ! defined  $share_account ) { print "Must specify an account to share the image to.\n";usage() };
+                 my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( POST => "https://$location.images.api.rackspacecloud.com/v2/images/$file_uuid/members");
+                 $req->header('content-type' => 'application/json');
+                 $req->header('accept' => 'application/json');
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $data="{ \"member\": \"$share_account\" }";
+                 $req->content($data);
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { print "Successly shared to account: $share_account\n"; } else { "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit ; } }
+
+sub AcceptImage { my $ticket=GetToken();
+                  my $ua=LWP::UserAgent->new;
+                  my $req=HTTP::Request->new( PUT => "https://$location.images.api.rackspacecloud.com/v2/images/$file_uuid/members");
+                  $req->header('content-type' => 'application/json');
+                  $req->header('accept' => 'application/json');
+                  $req->header('X-Auth-Token' => "$ticket");
+                  my $data="{ \"status\": \"accepted\" }";
+                  $req->content($data);
+                  my $answer = $ua->request($req);
+                  if ($answer->is_success) { print "Successly shared to account: $share_account\n"; } else { "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit ; } }
+
+sub ShowShare {   my $ticket=GetToken();
+                  my $ua=LWP::UserAgent->new;
+                  my $req=HTTP::Request->new( GET => "https://$location.images.api.rackspacecloud.com/v2/images/$file_uuid/members");
+                  $req->header('X-Auth-Token' => "$ticket");
+                  my $answer = $ua->request($req);
+                  if ($answer->is_success) { my $decoded_response=$answer->decoded_content;
+                                            print Dumper($decoded_response);
+                                          } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub GetToken { my $ua=LWP::UserAgent->new;
+               my $req=HTTP::Request->new( POST => 'https://identity.api.rackspacecloud.com/v2.0/tokens');
+               $req->header('content-type' => 'application/json');
+               my $data="{\"auth\":{\"RAX-KSKEY:apiKeyCredentials\":{\"username\":\"$account\",\"apiKey\":\"$apikey\"}}}";
+               $req->content($data);
+               my $answer = $ua->request($req);
+               if ($answer->is_success) { my $response = $answer->decoded_content;
+                                          my $decoded_response = decode_json $response;
+                                          my $token=$decoded_response->{access}->{token}->{id};
+                                          if ($action eq 'GetToken') {print $token."\n";}
+                                          return $token;} else { print "Error:\t".$answer->code."\t".$answer->decoded_content."\n"; exit 1; } }
+
+sub ListImages { my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( GET => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/images/detail");
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $response = $answer->decoded_content;
+                                            my $decoded_response = decode_json $response;
+                                            my $images=$decoded_response->{images};
+                                            foreach my $vm_image(@$images) { print "UUID: $vm_image->{id}\tName: $vm_image->{name}\n"; }
+                                            } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit ; } }
+
+sub ExportImage { if ( ! defined $file_uuid ) { print "Must specify a file uuid. ListImages first.\n";usage() };
+                 my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( POST => "https://$location.images.api.rackspacecloud.com/v2/tasks");
+                 $req->header('content-type' => 'application/json');
+                 $req->header('accept' => 'application/json');
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $data="{\"type\": \"export\", \"input\":  { \"image_uuid\": \"$file_uuid\", \"receiving_swift_container\": \"ops_files\" } }";
+                 $req->content($data);
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $response = $answer->decoded_content;
+                                            my $decoded_response = decode_json $response;
+                                            print "Status: $decoded_response->{status}\tTask: $decoded_response->{type}\tCreated: $decoded_response->{created_at}\tTaskID: $decoded_response->{id}\n";
+                                            } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub CheckImageTasks { my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 if ( defined $task_id) { $url="https://$location.images.api.rackspacecloud.com/v2/tasks/$task_id" }
+                    else { $url="https://$location.images.api.rackspacecloud.com/v2/tasks"};
+                 my $req=HTTP::Request->new( GET => $url);
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $response = $answer->decoded_content;
+                                            my $decoded_response = decode_json $response;
+                                            if ( defined $task_id)
+                                            { print "Status: $decoded_response->{status}\tTask: $decoded_response->{type}\tCreated: $decoded_response->{created_at}\n" } else { print Dumper($decoded_response); }
+                                            } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub ListServers { my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( GET => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers/detail");
+                 $req->header('X-Auth-Token' => "$ticket");
+                 my $answer = $ua->request($req);
+                 if ($answer->is_success) { my $response = $answer->decoded_content;
+                                            my $decoded_response = decode_json $response;
+                                            my $servers=$decoded_response->{servers};
+                                            foreach my $vm_server(@$servers)
+                                            { my $public_ip=$vm_server->{accessIPv4};
+                                                #{ print Dumper($vm_server); } } }
+                                                if ( $public_ip eq "") { $public_ip="NONE";};
+                                                my $rc_net="RC-$account-$location-int";
+                                                print "Name: $vm_server->{name}\tPrivateIP: $vm_server->{addresses}->{$rc_net}[0]->{addr}\t".
+                                                "PublicIP: $public_ip\tFlavor: $vm_server->{flavor}->{id}\tID:  $vm_server->{id}\n\n"; }
+                                            } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+sub ListFlavors { my $ticket=GetToken();
+                 my $ua=LWP::UserAgent->new;
+                  if ( defined $flavor ) { $url="https://$location.servers.api.rackspacecloud.com/v2/$acct_number/flavors/$flavor"; }
+                  else { $url="https://$location.servers.api.rackspacecloud.com/v2/$acct_number/flavors"; }
+                  my $req=HTTP::Request->new( GET => $url);
+                  $req->header('X-Auth-Token' => "$ticket");
+                  my $answer = $ua->request($req);
+                  if ($answer->is_success) { my $response = $answer->decoded_content;
+                                             my $decoded_response = decode_json $response;
+                                             if ( defined $flavor )
+                                            { print "Name: $decoded_response->{flavor}->{name}\tRAM: $decoded_response->{flavor}->{ram}\t".
+                                                "vCPU: $decoded_response->{flavor}->{vcpus}\tDisk: $decoded_response->{flavor}->{disk}\n";
+                                            } else { print Dumper($decoded_response); }
+                                            } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub UploadFile {  if ( ! defined $filename) { print "Must specify a filename (-n) for $action\n"; usage(); };
+`$swiftly --verbose --auth-url=https://identity.api.rackspacecloud.com/v2.0 --auth-user=$account --auth-key=$apikey --region=$location --concurrency=20 put --segment-size=s134217728 --input=$filename ops_files\/$filename`; }
+
+sub DownloadFile { if ( ! defined $filename) { print "Must specify a filename (-n) for $action\n"; usage(); };
+`$swiftly --verbose --auth-url=https://identity.api.rackspacecloud.com/v2.0 --auth-user=$account --auth-key=$apikey --region=$location --concurrency=20 get --output=$filename ops_files\/$filename`;  }
+
+sub DestroyHost   { if ( ! defined $host_id) { print "Must specify a host id (-i) for $action\n"; usage(); };
+                    ConfirmDialog();
+                    my $ticket=GetToken();
+                    my $ua=LWP::UserAgent->new;
+                    my $req=HTTP::Request->new( DELETE => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers/$host_id" );
+                    $req->header('X-Auth-Token' => "$ticket");
+                    my $answer = $ua->request($req);
+                    if ($answer->is_success) { print "Success! Request for deletion of Host ID: $host_id was accepted\n";
+                    } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub DeleteImage { if ( ! defined $file_uuid) { print "Must specify a file image uuid (-u) for $action\n"; usage(); };
+                    ConfirmDialog();
+                    my $ticket=GetToken();
+                    my $ua=LWP::UserAgent->new;
+                    my $req=HTTP::Request->new( DELETE => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/images/$file_uuid" );
+                    $req->header('X-Auth-Token' => "$ticket");
+                    my $answer = $ua->request($req);
+                    if ($answer->is_success) { print "Success! Request for deletion of UUID: $file_uuid was accepted\n";
+                    } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub CreateGoldenImage { if ( ! defined $host_id) { print "Must specify a host id (-i) for $action\n"; usage(); };
+                        if ( ! defined $filename) { print "Must specify a name (-n) for $action\n"; usage(); };
+                    my $ticket=GetToken();
+                    my $ua=LWP::UserAgent->new;
+                    my $req=HTTP::Request->new( POST => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers/$host_id/action" );
+                    $req->header('X-Auth-Token' => "$ticket");
+                    $req->header('content-type' => 'application/json');
+                    my $data="{ \"createImage\" : { \"name\" : \"$filename\" } }";
+                    $req->content($data);
+                    my $answer = $ua->request($req);
+                    if ($answer->is_success) { my $resp_headers=$answer->headers()->as_string;
+                                               my @headers=split(/\n/,$resp_headers);
+                                               my @image_location=grep(/Location/,@headers);
+                                               my $img_location=join("",@image_location);
+                                               print $img_location."\n"; exit 0;
+                     } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub BuildHost { if ( ! defined $hostname) { print "Must specify a hostname  (-h) for $action\n"; usage(); };
+                if ( ! defined $file_uuid ) { print "Must specify a golden image file uuid (-u) for $action\n"; usage(); };
+                if ( ! defined $flavor) { print "Must specify a vm flavor (-f) for $action\n"; usage(); };
+                my $ticket=GetToken();
+                #first lookup the UUID for the RC network in that location/customer, and than a call to build the host once we know the network UUID
+                my $net_lookup=LWP::UserAgent->new;
+                my $net_req=HTTP::Request->new( GET => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/os-networksv2" );
+                $net_req->header('X-Auth-Token' => "$ticket");
+                my $net_answer=$net_lookup->request($net_req);
+                if ( $net_answer-> is_success) {     my $net_response=$net_answer->decoded_content;
+                                                     my $net_decoded_response = decode_json $net_response;
+                                                     $rc_net=$net_decoded_response->{networks}[0]->{id};
+                                                     } else { print "Error: ".$net_answer->code." ".$net_answer->decoded_content."\n"; exit 1; }
+                 my $ua=LWP::UserAgent->new;
+                 my $req=HTTP::Request->new( POST => "https://$location.servers.api.rackspacecloud.com/v2/$acct_number/servers" );
+                 $req->header('X-Auth-Token' => "$ticket");
+                 $req->header('content-type' => 'application/json');
+                 my $data="{ \"server\":
+                           { \"name\": \"$hostname\", \"imageRef\": \"$file_uuid\",
+                             \"flavorRef\": \"$flavor\", \"networks\": [ { \"uuid\":\"$rc_net\" },
+                           { \"uuid\":\"11111111-1111-1111-1111-111111111111\" } ] } }";
+                 $req->content($data);
+                    my $answer = $ua->request($req);
+                    if ($answer->is_success) { print $answer->decoded_content ."\n"; exit 0;
+                    } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub ImportImage {  if ( ! defined $filename) { print "Must specify a filename (-n) for $action\n"; usage(); };
+                   my $ticket=GetToken();
+                   my $ua=LWP::UserAgent->new;
+                   my $req=HTTP::Request->new( POST => "https://$location.images.api.rackspacecloud.com/v2/tasks" );
+                   $req->header('X-Auth-Token' => "$ticket");
+                   $filename =~ /(.*)\./;
+                   my $template_name=$1;
+                   my $data="{\"type\": \"import\", \"input\": {\"import_from\": \"ops_files/$filename\", \"import_from_format\": \"vhd\", \"image_properties\" : {\"name\": \"$template_name\"} } }";
+                   $req->content($data);
+                    my $answer = $ua->request($req);
+                    if ($answer->is_success) { print $answer->decoded_content ."\n"; exit 0;
+                    } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub AddPublicIP { if ( ! defined $host_id) { print "Must specify a host's uuid (-i) for $action\n"; usage(); };
+                  if ( ! defined $location) { print "Must specify a location (-l) for $action\n"; usage(); };
+                  my $ticket=GetToken();
+                  my $ua=LWP::UserAgent->new;
+                  my $req=HTTP::Request->new( POST => "https://$location.rackconnect.api.rackspacecloud.com/v3/$acct_number/public_ips" );
+                  $req->header('X-Auth-Token' => "$ticket");
+                  $req->header('content-type' => 'application/json');
+                  my $data="{ \"cloud_server\": { \"id\": \"$host_id\" } }";
+                  $req->content($data);
+                  my $answer = $ua->request($req);
+                  if ($answer->is_success) { my $decoded_response=$answer->decoded_content;
+                                           print "Success! HostID: $host_id has been assigned a Public IP.\n"; exit 0;
+                                        } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub RemovePublicIP { if ( ! defined $host_id) { print "Must specify a host's Public IPv4 uuid (-i) for $action\n"; usage(); };
+                  if ( ! defined $location) { print "Must specify a location (-l) for $action\n"; usage(); };
+                  ConfirmDialog();
+                  my $ticket=GetToken();
+                  my $ua=LWP::UserAgent->new;
+                  my $req=HTTP::Request->new( DELETE => "https://$location.rackconnect.api.rackspacecloud.com/v3/$acct_number/public_ips/$host_id" );
+                  $req->header('X-Auth-Token' => "$ticket");
+                  $req->header('content-type' => 'application/json');
+                  my $answer = $ua->request($req);
+                  if ($answer->is_success) { print "Request to remove Public IPv4 with IPv4UUID: $host_id was successful\n";
+                  } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub ListPublicIP { if ( ! defined $host_id) { print "Must specify a host's Public IPv4 uuid (-i) for $action\n"; usage(); };
+                  if ( ! defined $location) { print "Must specify a location (-l) for $action\n"; usage(); };
+                  my $ticket=GetToken();
+                  my $ua=LWP::UserAgent->new;
+                  my $req=HTTP::Request->new( GET => "https://$location.rackconnect.api.rackspacecloud.com/v3/$acct_number/public_ips?cloud_server_id=$host_id" );
+                  $req->header('X-Auth-Token' => "$ticket");
+                  my $answer = $ua->request($req);
+                  if ($answer->is_success) { my $decoded_response=$answer->decoded_content;
+                                             print Dumper($decoded_response)."\n";
+                                             } else { print "Error: ".$answer->code." ".$answer->decoded_content."\n"; exit 1; } }
+
+sub ConfirmDialog { print "This is a destructive act, and requires confirmation\nDo you really wish to $action? y or n\n";
+                    my $answer=<>;
+                    chomp($answer);
+                    if ( $answer eq 'y') { return; } else { print "Goodbye\n"; exit 1 }; }
