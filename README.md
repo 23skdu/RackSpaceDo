@@ -1,7 +1,6 @@
-# RackSpaceDo
-automated cloud provisioning for Rackspace API in Perl
-Requires:
-Swiftly client via https://support.rackspace.com/how-to/install-the-swiftly-client-for-cloud-files/
+# RackSpaceDo -- automated cloud provisioning for Rackspace API in Perl
+Requires:  
+Swiftly client via https://support.rackspace.com/how-to/install-the-swiftly-client-for-cloud-files/  
 LWP::UserAgent  
 JSON 
 
